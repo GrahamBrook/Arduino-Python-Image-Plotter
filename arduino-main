@@ -1,0 +1,96 @@
+#include <AccelStepper.h>
+#include <AFMotor.h>
+#include <ArduinoJson.h>
+#include <math.h>
+#include <Servo.h>
+
+// Two stepper motors one on each port
+AF_Stepper motor1(200, 1);
+AF_Stepper motor2(200, 2);
+
+// Servo motor
+Servo penController;
+
+// Number of points being received. **must be even**
+int packageSize = 100;
+
+// Wrappers for the motors
+void forwardstep1() {  
+  motor1.onestep(FORWARD, SINGLE);
+}
+void backwardstep1() {  
+  motor1.onestep(BACKWARD, SINGLE);
+}
+void forwardstep2() {  
+  motor2.onestep(FORWARD, SINGLE);
+}
+void backwardstep2() {  
+  motor2.onestep(BACKWARD, SINGLE);
+}
+
+// Creating the stepper motor objects
+AccelStepper stepper1(forwardstep1, backwardstep1);
+AccelStepper stepper2(forwardstep2, backwardstep2);
+
+void setup() {
+  // Open serial connection 
+  Serial.begin(9600);
+
+  // Define stepper motor settings
+  stepper1.setMaxSpeed(400.0);
+  stepper1.setAcceleration(1000.0);
+  stepper1.setCurrentPosition(2500.0);
+  
+  stepper2.setMaxSpeed(400.0);
+  stepper2.setAcceleration(1000.0);
+  stepper2.setCurrentPosition(2500.0);
+
+  // Attach the servo motor to the ser1 port
+  penController.attach(10);
+}
+
+void loop() {
+  // If a package is received
+  if (Serial.available()) {
+    StaticJsonDocument<1000> doc;  // Adjust the size according to your JSON data
+    DeserializationError error = deserializeJson(doc, Serial);
+
+    // Access the JSON data and store into array
+    int data[packageSize];
+    for (int i = 0; i < packageSize; i++) {
+      data[i] = doc[i].as<int>();
+    }
+    // In the last package, empty points will be 0's, so lift the pen to end drawing
+    for (int i = 0; i < ceil(packageSize / 2); i++) {
+      if (data[i * 2] == 0) {
+        penController.write(150);
+      }
+    // If a travel marker is read, lift the pen up
+      else if (data[i * 2] == 9999) {
+        Serial.println("Lifting pen up.");
+        penController.write(150);
+      }
+    // Put the pen down at the end of a travel marker, wait 2 seconds to allow pen to stabilize
+      else if (data[i * 2] == 8888) {
+        Serial.println("Putting pen down.");
+        penController.write(30);
+        delay(2000);
+      } 
+    // Move to point in array and print to serial
+      else {
+        stepper1.moveTo(data[(2 * i)]);
+        stepper2.moveTo(data[(2* i) + 1]);
+        Serial.println("Stepper 1 moving to:");
+        Serial.println(data[(2 * i)]);
+        Serial.println("Stepper 2 moving to:");
+        Serial.println(data[(2 * i) + 1]);
+        while (stepper1.isRunning() || stepper2.isRunning()) {
+          stepper1.run();
+          stepper2.run();
+        }
+      }
+    }
+  // At the end of a package will send confirmation and wait until next package is sent
+  Serial.println("Serial: Finished Package");
+  }
+}
